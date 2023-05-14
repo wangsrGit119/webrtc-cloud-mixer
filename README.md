@@ -19,9 +19,10 @@ import {WebRTCRecorder} from 'webrtc-cloud-mixer'
 |:-:|:-:| 
 | api| 远程服务端API|
 |logger| 是否开启日志| 
-|recordMic| 是否录制麦克风| 
+|recordMic| 是否录制麦克风,如果不开启音频默认为视频的混音，开启后则会同时录制麦克分声音到混合音频| 
 |config| webrtc协商类型、stun服务地址、turn服务地址等配置，遵循原生[ PeerConnection(configuration) ](https://developer.mozilla.org/zh-CN/docs/Web/API/RTCPeerConnection/RTCPeerConnection)参数配置| 
 |mergerParams| 合成输出基础配置| 
+|videoElements|要合并的video元素，内部参数为布局，数组第一个元素为主要画面也就是底层铺满画面|
 
 
 ### 示例
@@ -90,10 +91,30 @@ let videoElements = [
   
 ```
 
-#### 远程录制
+#### 本地录制
 
-> 远程录制的前提是前面合成画面已经开始合成
+> 本地录制不需要配置API，录制全在本地浏览器中进行
 
 ```
-await recorder.sendRemoteRecord()
+//开启画面合成
+await recorder.startStreamMerger(videoElements, 'requestAnimation')
+//开启本地录制
+await recorder.sendLocalRecord(recorder.mergerStream)
+//10s后结束录制并获取录制的流以及录制时常
+setTimeout(async () => {
+	const { blob, videoUrl, totalTime } = await recorder.stopLocalRecord()
+	console.log(blob, videoUrl, totalTime)
+	//本地预览 <video id="remoteRecordVideo" :src="localRecordVideoUrl" controls width="600" height="300" autoplay></video>
+	that.localRecordVideoUrl = videoUrl
+},10000)
+await recorder.sendRemoteRecord(recorder.mergerStream)
+```
+
+
+#### 远程录制
+
+> 远程录制的前提是前面合成画面已经开始合成；同时必须配置远程的API才可以用
+
+```
+await recorder.sendRemoteRecord(recorder.mergerStream)
 ```

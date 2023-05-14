@@ -17,6 +17,9 @@ const {
 	codecs
 } = RTCRtpSender.getCapabilities('video');
 console.log(codecs)
+
+import {LocalRecorder} from './localRecorder.js'
+
 class Logger {
 	constructor(log = true) {
 		this.log = log;
@@ -58,6 +61,7 @@ export class WebRTCRecorder {
 	#lastBytesSend = null;
 	#lastTimestampFS = null;
 	#timer = null;
+	#localRecorder = null;
 	constructor(options) {
 		this.api = options.api || '';
 		this.pc = null;
@@ -66,8 +70,8 @@ export class WebRTCRecorder {
 		this.logger = options.logger === true ? new Logger(true) : new Logger(false);
 		this.mergerStream = null;
 		this.recordMic = options.recordMic || false;
-		this.bandwidth = 1 * 1000 *
-			1000 // 单位 bitrate（bit）   //配置说明： 1MB-> 1024*1024*8 bit 约等于 1000*1000*8 (如果1Mb则不乘8) 
+		this.bandwidth = 8 * 1000 *
+			1000 // 单位 bitrate   //配置说明：
 
 		this.config = options.config || {
 			sdpSemantics: 'unified-plan',
@@ -103,15 +107,56 @@ export class WebRTCRecorder {
 	async startStreamMerger(videoElements, type = "requestAnimation") {
 		const that = this
 		this.mergerStream = await this.composeVideos(videoElements, type)
+		this.setVideoTrackContentHints(this.mergerStream, 'text')
+		this.mergerStream.getTracks().forEach(track => {
+			console.log(track)
+		})
 		this.setDomVideoStream('mergerVideoELe', this.mergerStream)
 
 	}
 	/**
-	 * @description start remote recorder
+	 * @param {Object} stream
+	 * @param {Object} hint motion :【应将轨道视为包含运动很重要的视频】保持流畅性 但是降低分辨率  
+	 * detail：【应将轨道视为视频细节格外重要】分辨率不变 但是fps可以变动； text：【应将轨道视为视频细节格外重要】分辨率不变 但是fps可以变动
 	 */
-	async sendRemoteRecord() {
-		if (this.mergerStream) {
-			const cloneStream = this.mergerStream.clone()
+	setVideoTrackContentHints(stream, hint) {
+		const tracks = stream.getVideoTracks();
+		tracks.forEach(track => {
+			if ('contentHint' in track) {
+				track.contentHint = hint;
+				if (track.contentHint !== hint) {
+					console.warn('Invalid video track contentHint: \'' + hint + '\'');
+				}
+			} else {
+				console.warn('MediaStreamTrack contentHint attribute not support ');
+			}
+		});
+	}
+	
+	/**
+	 * @description 本地录制
+	 * @param {Object} mediaStream
+	 */
+	async sendLocalRecord(mediaStream){
+		this.#localRecorder = new LocalRecorder();
+		await this.#localRecorder.startRecording(mediaStream);
+	}
+	/**
+	 * @description 停止本地录制
+	 * @returns { blob, videoUrl, totalTime }
+	 */
+	async stopLocalRecord(){
+		// const { blob, videoUrl, totalTime } = await recorder.stopRecording();
+		return await this.#localRecorder.stopRecording();
+	}
+
+	/**
+	 * @description start remote recorder
+	 * @param {Object} mediaStream 合成流
+	 */
+	async sendRemoteRecord(mediaStream) {
+		if (mediaStream) {
+			const cloneStream = mediaStream.clone()
 			this.targetStreamToRemote(cloneStream.getVideoTracks()[0], cloneStream.getAudioTracks()[0])
 		} else {
 			console.error("请先合成视频画面再进行远程录制")
@@ -159,7 +204,7 @@ export class WebRTCRecorder {
 		var videoSourceNodes = [];
 		for (var i = 0; i < videos.length; i++) {
 			var video = videos[i].dom;
-			if (video.captureStream().getAudioTracks().length > 0) {
+			if (video.captureStream().getAudioTracks().length > 0 && !video.mute) {
 				var sourceNode = null;
 				sourceNode = audioContext.createMediaStreamSource(video.captureStream());
 				videoSourceNodes.push(sourceNode);
@@ -269,8 +314,8 @@ export class WebRTCRecorder {
 					if (that.#lastBytesReceived && that.#lastTimestampFR) {
 						let bf = bytesReceived - that.#lastBytesReceived;
 						let t = now - that.#lastTimestampFR;
-						const bitrate = (bf * 8 / 1000 / t).toFixed(3);
-						console.log(`当前入口宽带为：${bitrate} kbps`);
+						const bitrate = (bf / 8 / t).toFixed(3);
+						console.log(`当前入口宽带为：${bitrate} KB/s`);
 					}
 
 					// 更新上一次统计结果
@@ -285,9 +330,9 @@ export class WebRTCRecorder {
 						let bf = bytesSent - that.#lastBytesSend;
 						let t = now - that.#lastTimestampFS;
 
-						// 计算宽带并输出到控制台上byte -> bf*8 bit  -> bf*8/1000 kbps 
-						const bitrate = (bf * 8 / 1000 / t).toFixed(3);
-						console.log(`当前出口宽带为：  ${bf}-${bitrate} kbps`);
+						// 计算宽带并输出到控制台上bitrate 为 kbit/s -> bf/8
+						const bitrate = (bf / 8 / t).toFixed(3);
+						console.log(`当前出口宽带为：${bitrate} KB/s`);
 					}
 
 					// 更新上一次统计结果
@@ -314,24 +359,18 @@ export class WebRTCRecorder {
 	}
 
 	bandwidthConstraint(sdp, bandwidth) {
-		const lines = sdp.split('\n');
-		let videoIndex = -1;
-		let hasBandwidth = false;
-
-		for (let i = 0; i < lines.length; i++) {
-			if (lines[i].startsWith('m=video')) {
-				videoIndex = i;
-			} else if (lines[i].startsWith('b=AS:')) {
-				lines[i] = 'b=AS:' + bandwidth;
-				hasBandwidth = true;
-			}
+		let modifier = 'AS';
+		// if (adapter.browserDetails.browser === 'firefox') {
+		//   bandwidth = (bandwidth >>> 0) * 1000;
+		//   modifier = 'TIAS';
+		// }
+		if (sdp.indexOf('b=' + modifier + ':') === -1) {
+			// insert b= after c= line.
+		 sdp = sdp.replace(/c=IN (.*)\r\n/, 'c=IN $1\r\nb=' + modifier + ':' + bandwidth + '\r\n');
+		} else {
+			sdp = sdp.replace(new RegExp('b=' + modifier + ':.*\r\n'), 'b=' + modifier + ':' + bandwidth + '\r\n');
 		}
-
-		if (!hasBandwidth && videoIndex >= 0) {
-			lines.splice(videoIndex + 1, 0, 'b=AS:' + bandwidth);
-		}
-
-		return lines.join('\n');
+		return sdp;
 	}
 
 	async targetStreamToRemote(vTrack, aTrack) {
@@ -379,18 +418,27 @@ export class WebRTCRecorder {
 			this.logger.info('pc.iceConnectionState', this.pc.iceConnectionState);
 			//scaleResolutionDownBy选项是指示浏览器是否自动降低视频分辨率的选项。
 			if (this.pc.iceConnectionState === 'connected') {
-				// this.statsBandwidth(this.pc)
-				const sender = this.pc.getSenders().find(s => s.track.kind === 'video');
-				// const constraints = {
-				//   width: {min: 640},
-				//   height: {min: 480},
-				//   frameRate: {min: 20,max:30}
-				// };
-				const parameters = sender.getParameters();
-				delete parameters.encodings[0].scaleResolutionDownBy;
-				parameters.encodings[0].minBitrate = this.bandwidth;
-				sender.setParameters(parameters);
-				// await sender.track.applyConstraints(constraints)
+				this.statsBandwidth(this.pc)
+				setTimeout(async () => {
+					const sender = this.pc.getSenders().find(s => s.track.kind === 'video');
+					// const constraints = {
+					//   width: {min: 640},
+					//   height: {min: 480},
+					//   frameRate: {min: 20,max:30}
+					// };
+					const parameters = sender.getParameters();
+					if (!parameters.encodings) {
+						parameters.encodings = [{}];
+					}
+					// delete parameters.encodings[0].scaleResolutionDownBy;
+					parameters.encodings[0].maxBitrate = this.bandwidth;
+					// parameters.encodings[0].networkPriority = 'high';
+					// parameters.encodings[0].priority = 'high'
+					// await sender.setParameters(parameters);
+					console.log(sender.getParameters())
+					// await sender.track.applyConstraints(constraints)
+				}, 3000)
+
 			}
 		});
 
