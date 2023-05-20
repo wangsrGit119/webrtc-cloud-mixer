@@ -17,8 +17,13 @@ const {
 	codecs
 } = RTCRtpSender.getCapabilities('video');
 console.log(codecs)
+let codecs_videos = RTCRtpReceiver.getCapabilities('video').codecs.filter(
+function(codec) {return codec.mimeType.toLowerCase() === 'video/h264'});
+console.log(codecs_videos)
 
-import {LocalRecorder} from './localRecorder.js'
+import {
+	LocalRecorder
+} from './localRecorder.js'
 
 class Logger {
 	constructor(log = true) {
@@ -56,9 +61,9 @@ class Logger {
 	}
 }
 export class WebRTCRecorder {
-	#lastBytesReceived = null;
+	#lastReceived = null;
 	#lastTimestampFR = null;
-	#lastBytesSend = null;
+	#lastSend = null;
 	#lastTimestampFS = null;
 	#timer = null;
 	#localRecorder = null;
@@ -70,8 +75,7 @@ export class WebRTCRecorder {
 		this.logger = options.logger === true ? new Logger(true) : new Logger(false);
 		this.mergerStream = null;
 		this.recordMic = options.recordMic || false;
-		this.bandwidth = 8 * 1000 *
-			1000 // 单位 bitrate   //配置说明：
+		this.bandwidthInKbps = options.bandwidthInKbps || 2000 //  kbps
 
 		this.config = options.config || {
 			sdpSemantics: 'unified-plan',
@@ -94,11 +98,30 @@ export class WebRTCRecorder {
 	async getLocalUserMedia() {
 		return (await navigator.mediaDevices.getUserMedia({
 			audio: true,
-			video: true
+			video: {
+				width: {
+					min: 1280
+				},
+				height: {
+					min: 720
+				}
+			}
 		}))
 	}
 
 
+	async getShareMedia(){
+		const constraints = {
+			video:{width:1920,height:1080},
+			audio:true
+		};
+		if (window.stream) {
+			window.stream.getTracks().forEach(track => {
+				track.stop();
+			});
+		}
+		return await navigator.mediaDevices.getDisplayMedia(constraints).catch(this.handleError);
+	}
 
 	/**
 	 * @description merger videos and record to cloud
@@ -107,10 +130,12 @@ export class WebRTCRecorder {
 	async startStreamMerger(videoElements, type = "requestAnimation") {
 		const that = this
 		this.mergerStream = await this.composeVideos(videoElements, type)
-		this.setVideoTrackContentHints(this.mergerStream, 'text')
+		this.setVideoTrackContentHints(this.mergerStream, 'motion')
 		this.mergerStream.getTracks().forEach(track => {
-			console.log(track)
+			that.logger.debug("sender track info",track.getSettings())
 		})
+		
+		// this.mergerStream = await this.getLocalUserMedia()
 		this.setDomVideoStream('mergerVideoELe', this.mergerStream)
 
 	}
@@ -132,12 +157,12 @@ export class WebRTCRecorder {
 			}
 		});
 	}
-	
+
 	/**
 	 * @description 本地录制
 	 * @param {Object} mediaStream
 	 */
-	async sendLocalRecord(mediaStream){
+	async sendLocalRecord(mediaStream) {
 		this.#localRecorder = new LocalRecorder();
 		await this.#localRecorder.startRecording(mediaStream);
 	}
@@ -145,7 +170,7 @@ export class WebRTCRecorder {
 	 * @description 停止本地录制
 	 * @returns { blob, videoUrl, totalTime }
 	 */
-	async stopLocalRecord(){
+	async stopLocalRecord() {
 		// const { blob, videoUrl, totalTime } = await recorder.stopRecording();
 		return await this.#localRecorder.stopRecording();
 	}
@@ -224,7 +249,7 @@ export class WebRTCRecorder {
 
 		canvas.width = this.mergerParams.width;
 		canvas.height = this.mergerParams.height;
-
+		let frameInterval = (1000 / this.mergerParams.fps).toFixed(2)
 		// 每帧绘制画面
 		function drawVideo() {
 			ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -304,46 +329,41 @@ export class WebRTCRecorder {
 	calculateReceiverBitrate(pc) {
 		const that = this
 		pc.getStats().then((res) => {
-			res.forEach((report) => {
+			res.forEach(report => {
+				let bytes;
+				let headerBytes;
+				let packets;
+				const now = report.timestamp;
+				if (report.type === 'outbound-rtp' && report.kind === "video") {
 
-				// 入口宽带
-				if (report.type === "inbound-rtp" && report.kind === "video" && report
-					.bytesReceived) {
-					const bytesReceived = report.bytesReceived;
-					const now = report.timestamp;
-					if (that.#lastBytesReceived && that.#lastTimestampFR) {
-						let bf = bytesReceived - that.#lastBytesReceived;
-						let t = now - that.#lastTimestampFR;
-						const bitrate = (bf / 8 / t).toFixed(3);
-						console.log(`当前入口宽带为：${bitrate} KB/s`);
+					bytes = report.bytesSent;
+					if (that.#lastSend && that.#lastSend.has(report.id)) {
+						const bitrate = 8 * (bytes - that.#lastSend.get(report.id)
+								.bytesSent) /
+							(now - that.#lastSend.get(report.id).timestamp);
+
+						console.log(`当前出口bitrate为：${bitrate.toFixed(3)} kbps`);
 					}
-
-					// 更新上一次统计结果
-					that.#lastBytesReceived = bytesReceived;
-					that.#lastTimestampFR = now;
+					that.#lastSend = res
 				}
-				// 出口宽带
-				if (report.type === "outbound-rtp" && report.kind === "video" && report.bytesSent) {
-					const now = report.timestamp;
-					const bytesSent = report.bytesSent;
-					if (that.#lastBytesSend && that.#lastTimestampFS) {
-						let bf = bytesSent - that.#lastBytesSend;
-						let t = now - that.#lastTimestampFS;
+				if (report.type === 'inbound-rtp' && report.kind === "video") {
 
-						// 计算宽带并输出到控制台上bitrate 为 kbit/s -> bf/8
-						const bitrate = (bf / 8 / t).toFixed(3);
-						console.log(`当前出口宽带为：${bitrate} KB/s`);
+					bytes = report.bytesReceived;
+					if (that.#lastReceived && that.#lastReceived.has(report.id)) {
+						const bitrate = 8 * (bytes - that.#lastReceived.get(report.id)
+								.bytesReceived) /
+							(now - that.#lastReceived.get(report.id).timestamp);
+
+						console.log(`当前入口bitrate为：${bitrate.toFixed(3)} kbps`);
 					}
-
-					// 更新上一次统计结果
-					that.#lastBytesSend = bytesSent;
-					that.#lastTimestampFS = now;
+					that.#lastReceived = res
 				}
 
 			});
+
 		});
 	}
-	statsBandwidth(pc) {
+	async statsBandwidth(pc) {
 		const that = this
 		if (!pc) {
 			return
@@ -352,7 +372,7 @@ export class WebRTCRecorder {
 			clearInterval(this.#timer)
 		}
 
-		this.#timer = setInterval(() => {
+		this.#timer = setInterval(async () => {
 			that.calculateReceiverBitrate(pc)
 		}, 3000)
 
@@ -364,13 +384,32 @@ export class WebRTCRecorder {
 		//   bandwidth = (bandwidth >>> 0) * 1000;
 		//   modifier = 'TIAS';
 		// }
-		if (sdp.indexOf('b=' + modifier + ':') === -1) {
-			// insert b= after c= line.
-		 sdp = sdp.replace(/c=IN (.*)\r\n/, 'c=IN $1\r\nb=' + modifier + ':' + bandwidth + '\r\n');
+		// 查找 c=IN 行的位置
+		const cIndex = sdp.indexOf("c=IN ");
+		// 添加新的 AS 宽带限制
+		if (sdp.indexOf("b=AS:") === -1) {
+		  sdp = sdp.slice(0, cIndex) + 'b=AS:'+bandwidth+'\r\n'+ sdp.slice(cIndex);
 		} else {
-			sdp = sdp.replace(new RegExp('b=' + modifier + ':.*\r\n'), 'b=' + modifier + ':' + bandwidth + '\r\n');
+		  sdp = sdp.replace(/b=AS:\d+/, 'b=AS:'+bandwidth+'\r\n');
 		}
+
 		return sdp;
+	}
+
+	/**
+	 * @description 传输过程中变更
+	 * @param {Object} biterate
+	 */
+	async changeBitRate(biterate) {
+		if (this.pc) {
+			const senders = this.pc.getSenders();
+			const send = senders.find((s) => s.track.kind === 'video')
+			const parameters = send.getParameters();
+			parameters.encodings[0].maxBitrate = biterate * 1000; //kbps
+			await send.setParameters(parameters);
+			console.log(send.getParameters())
+		}
+
 	}
 
 	async targetStreamToRemote(vTrack, aTrack) {
@@ -378,10 +417,12 @@ export class WebRTCRecorder {
 		this.pc.addTransceiver('audio', {
 			direction: 'sendrecv'
 		});
-		this.pc.addTransceiver('video', {
-			direction: 'sendrecv'
+		let transceiver = this.pc.addTransceiver('video', {
+			direction: 'sendrecv',
 		});
-
+		// 约束为H264编码
+		// transceiver.setCodecPreferences(codecs_videos);
+		
 		this.channel = await this.pc.createDataChannel('chat');
 		this.channel.addEventListener('open', () => {
 			this.logger.info('客户端通道创建');
@@ -398,14 +439,17 @@ export class WebRTCRecorder {
 
 		let resOffer = {
 			type: offer.type,
-			sdp: this.bandwidthConstraint(offer.sdp, this.bandwidth)
+			sdp: this.bandwidthConstraint(offer.sdp, this.bandwidthInKbps)
 		}
-		this.logger.info(resOffer.sdp);
+		this.logger.debug(resOffer.sdp);
 		await this.pc.setLocalDescription(resOffer);
 		this.sender = this.pc.addTrack(vTrack);
+		
 		const parameters = this.sender.getParameters();
 		this.logger.info('sender parameters', parameters);
-		this.pc.addTrack(aTrack);
+		if(aTrack){
+			this.pc.addTrack(aTrack);
+		}
 		this.pc.addEventListener('icecandidate', event => {
 			if (event.candidate) {
 				this.logger.info("ICE Candidate ==========>", event.candidate)
@@ -416,30 +460,22 @@ export class WebRTCRecorder {
 		});
 		this.pc.addEventListener('iceconnectionstatechange', async event => {
 			this.logger.info('pc.iceConnectionState', this.pc.iceConnectionState);
-			//scaleResolutionDownBy选项是指示浏览器是否自动降低视频分辨率的选项。
-			if (this.pc.iceConnectionState === 'connected') {
-				this.statsBandwidth(this.pc)
-				setTimeout(async () => {
-					const sender = this.pc.getSenders().find(s => s.track.kind === 'video');
-					// const constraints = {
-					//   width: {min: 640},
-					//   height: {min: 480},
-					//   frameRate: {min: 20,max:30}
-					// };
-					const parameters = sender.getParameters();
-					if (!parameters.encodings) {
-						parameters.encodings = [{}];
-					}
-					// delete parameters.encodings[0].scaleResolutionDownBy;
-					parameters.encodings[0].maxBitrate = this.bandwidth;
-					// parameters.encodings[0].networkPriority = 'high';
-					// parameters.encodings[0].priority = 'high'
-					// await sender.setParameters(parameters);
-					console.log(sender.getParameters())
-					// await sender.track.applyConstraints(constraints)
-				}, 3000)
-
-			}
+		});
+		
+		this.pc.addEventListener('signalingstatechange', async () => {
+		  if (this.pc.signalingState === 'stable') {
+			  this.statsBandwidth(this.pc)
+		    const sender = this.pc.getSenders().find(
+		      sender => sender.track.kind === 'video'
+		    );
+		    if (sender) {
+		      const parameters = sender.getParameters();
+			  parameters.encodings[0].maxBitrate = this.bandwidthInKbps * 1000;
+			  parameters.encodings[0].scaleResolutionDownBy = 1;
+		      await sender.setParameters(parameters);
+			  console.log("-------set bitrate------------", sender.getParameters())
+		    }
+		  }
 		});
 
 		this.pc.addEventListener('icegatheringstatechange', async ev => {
@@ -456,9 +492,9 @@ export class WebRTCRecorder {
 					let result = await this.pullRemoteAnswerSdp(sdp, 6000);
 					const remoteDesc = {
 						type: 'answer',
-						sdp: this.bandwidthConstraint(result['sdp'], this.bandwidth)
+						sdp: this.bandwidthConstraint(result['sdp'], this.bandwidthInKbps)
 					};
-					this.logger.info('remoteDesc', remoteDesc);
+					this.logger.info('remoteDesc', remoteDesc.sdp);
 					await this.pc.setRemoteDescription(new RTCSessionDescription(remoteDesc));
 					break;
 			}
@@ -466,7 +502,7 @@ export class WebRTCRecorder {
 
 		this.pc.addEventListener('track', evt => {
 			setInterval(() => {
-				this.logger.info('远程媒体', evt.track.getSettings());
+				this.logger.debug('远程媒体', evt.track.getSettings());
 			}, 10000);
 
 			this.setDomVideoTrick('remoteRecordVideo', evt.track);
@@ -517,6 +553,14 @@ export class WebRTCRecorder {
 			clearTimeout(timeoutId);
 			this.logger.error(err);
 			throw err;
+		}
+	}
+	/**
+	 * @description 结束远程录制
+	 */
+	async stopRemoteRecord() {
+		if (this.pc) {
+			this.pc.close()
 		}
 	}
 

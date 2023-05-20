@@ -19,6 +19,7 @@ import {WebRTCRecorder} from 'webrtc-cloud-mixer'
 |:-:|:-:| 
 | api| 远程服务端API|
 |logger| 是否开启日志| 
+|bandwidthInKbps|远程发送宽带配置（单位kbps），如果画质不清晰可以增加|
 |recordMic| 是否录制麦克风,如果不开启音频默认为视频的混音，开启后则会同时录制麦克分声音到混合音频| 
 |config| webrtc协商类型、stun服务地址、turn服务地址等配置，遵循原生[ PeerConnection(configuration) ](https://developer.mozilla.org/zh-CN/docs/Web/API/RTCPeerConnection/RTCPeerConnection)参数配置| 
 |mergerParams| 合成输出基础配置| 
@@ -113,7 +114,8 @@ await recorder.sendRemoteRecord(recorder.mergerStream)
 
 #### 远程录制
 
-> 远程录制的前提是前面合成画面已经开始合成；同时必须配置远程的API才可以用
+> 远程录制的前提是前面合成画面已经开始合成；同时必须配置远程的API才可以用（注意控制比特率）
+> 也可以手动在传输过程中变更 recorder.changeBitRate(2000)//2000kbps
 
 ```
 await recorder.sendRemoteRecord(recorder.mergerStream)
