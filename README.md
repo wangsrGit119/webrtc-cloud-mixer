@@ -120,3 +120,11 @@ await recorder.sendRemoteRecord(recorder.mergerStream)
 ```
 await recorder.sendRemoteRecord(recorder.mergerStream)
 ```
+
+#### 远程录制返回参数
+
+```
+recorder.remoteCallBackInfo 
+
+
+```

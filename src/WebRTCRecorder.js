@@ -83,6 +83,7 @@ export class WebRTCRecorder {
 				urls: 'stun:stun.l.google.com:19302'
 			}]
 		};
+		this.remoteCallBackInfo = null
 
 		this.mergerParams = options.mergerParams || {
 			width: 1280,
@@ -545,6 +546,7 @@ export class WebRTCRecorder {
 			});
 			clearTimeout(timeoutId);
 			const res = await response.json();
+			this.remoteCallBackInfo = res
 			if (res.code !== 200) {
 				throw new Error("交换SDP信令失败+" + res);
 			}

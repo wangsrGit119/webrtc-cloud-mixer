@@ -1,6 +1,6 @@
 {
   "name": "webrtc-cloud-mixer",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Webrtc 多视频合成、本地录制、云端录制；videos merger、remote、local recording；",
   "main": "src/WebRTCRecorder.js",
   "scripts": {
