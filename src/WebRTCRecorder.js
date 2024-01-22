@@ -61,12 +61,7 @@ class Logger {
 	}
 }
 export class WebRTCRecorder {
-	#lastReceived = null;
-	#lastTimestampFR = null;
-	#lastSend = null;
-	#lastTimestampFS = null;
-	#timer = null;
-	#localRecorder = null;
+
 	constructor(options) {
 		this.api = options.api || '';
 		this.pc = null;
@@ -76,6 +71,13 @@ export class WebRTCRecorder {
 		this.mergerStream = null;
 		this.recordMic = options.recordMic || false;
 		this.bandwidthInKbps = options.bandwidthInKbps || 2000 //  kbps
+
+		this.lastReceived = null;
+		this.lastTimestampFR = null;
+		this.lastSend = null;
+		this.lastTimestampFS = null;
+		this.timer = null;
+		this.localRecorder = null;
 
 		this.config = options.config || {
 			sdpSemantics: 'unified-plan',
@@ -91,9 +93,7 @@ export class WebRTCRecorder {
 			fps: 30
 		};
 
-		if (this.#timer) {
-			clearInterval(this.#timer)
-		}
+
 	}
 
 	async getLocalUserMedia() {
@@ -135,14 +135,14 @@ export class WebRTCRecorder {
 		this.mergerStream.getTracks().forEach(track => {
 			that.logger.debug("sender track info",track.getSettings())
 		})
-		
+
 		// this.mergerStream = await this.getLocalUserMedia()
 		this.setDomVideoStream('mergerVideoELe', this.mergerStream)
 
 	}
 	/**
 	 * @param {Object} stream
-	 * @param {Object} hint motion :【应将轨道视为包含运动很重要的视频】保持流畅性 但是降低分辨率  
+	 * @param {Object} hint motion :【应将轨道视为包含运动很重要的视频】保持流畅性 但是降低分辨率
 	 * detail：【应将轨道视为视频细节格外重要】分辨率不变 但是fps可以变动； text：【应将轨道视为视频细节格外重要】分辨率不变 但是fps可以变动
 	 */
 	setVideoTrackContentHints(stream, hint) {
@@ -164,8 +164,8 @@ export class WebRTCRecorder {
 	 * @param {Object} mediaStream
 	 */
 	async sendLocalRecord(mediaStream) {
-		this.#localRecorder = new LocalRecorder();
-		await this.#localRecorder.startRecording(mediaStream);
+		this.localRecorder = new LocalRecorder();
+		await this.localRecorder.startRecording(mediaStream);
 	}
 	/**
 	 * @description 停止本地录制
@@ -173,7 +173,7 @@ export class WebRTCRecorder {
 	 */
 	async stopLocalRecord() {
 		// const { blob, videoUrl, totalTime } = await recorder.stopRecording();
-		return await this.#localRecorder.stopRecording();
+		return await this.localRecorder.stopRecording();
 	}
 
 	/**
@@ -204,16 +204,16 @@ export class WebRTCRecorder {
 	 * @param {Object} audioStream
 	 */
 	async mixAudioStreams(speakerStream, audioStream) {
-		var audioContext = new AudioContext();
-		var destinationNode = audioContext.createMediaStreamDestination();
+		let audioContext = new AudioContext();
+		let destinationNode = audioContext.createMediaStreamDestination();
 
-		var speakerSourceNode = audioContext.createMediaStreamSource(speakerStream);
-		var audioSourceNode = audioContext.createMediaStreamSource(audioStream);
+		let speakerSourceNode = audioContext.createMediaStreamSource(speakerStream);
+		let audioSourceNode = audioContext.createMediaStreamSource(audioStream);
 
 		speakerSourceNode.connect(destinationNode);
 		audioSourceNode.connect(destinationNode);
 
-		var mixedAudioStream = new MediaStream(destinationNode.stream.getAudioTracks());
+		let mixedAudioStream = new MediaStream(destinationNode.stream.getAudioTracks());
 		return mixedAudioStream;
 	}
 
@@ -338,26 +338,26 @@ export class WebRTCRecorder {
 				if (report.type === 'outbound-rtp' && report.kind === "video") {
 
 					bytes = report.bytesSent;
-					if (that.#lastSend && that.#lastSend.has(report.id)) {
-						const bitrate = 8 * (bytes - that.#lastSend.get(report.id)
+					if (that.lastSend && that.lastSend.has(report.id)) {
+						const bitrate = 8 * (bytes - that.lastSend.get(report.id)
 								.bytesSent) /
-							(now - that.#lastSend.get(report.id).timestamp);
+							(now - that.lastSend.get(report.id).timestamp);
 
 						console.log(`当前出口bitrate为：${bitrate.toFixed(3)} kbps`);
 					}
-					that.#lastSend = res
+					that.lastSend = res
 				}
 				if (report.type === 'inbound-rtp' && report.kind === "video") {
 
 					bytes = report.bytesReceived;
-					if (that.#lastReceived && that.#lastReceived.has(report.id)) {
-						const bitrate = 8 * (bytes - that.#lastReceived.get(report.id)
+					if (that.lastReceived && that.lastReceived.has(report.id)) {
+						const bitrate = 8 * (bytes - that.lastReceived.get(report.id)
 								.bytesReceived) /
-							(now - that.#lastReceived.get(report.id).timestamp);
+							(now - that.lastReceived.get(report.id).timestamp);
 
 						console.log(`当前入口bitrate为：${bitrate.toFixed(3)} kbps`);
 					}
-					that.#lastReceived = res
+					that.lastReceived = res
 				}
 
 			});
@@ -369,11 +369,11 @@ export class WebRTCRecorder {
 		if (!pc) {
 			return
 		}
-		if (this.#timer) {
-			clearInterval(this.#timer)
+		if (this.timer) {
+			clearInterval(this.timer)
 		}
 
-		this.#timer = setInterval(async () => {
+		this.timer = setInterval(async () => {
 			that.calculateReceiverBitrate(pc)
 		}, 3000)
 
@@ -423,7 +423,7 @@ export class WebRTCRecorder {
 		});
 		// 约束为H264编码
 		// transceiver.setCodecPreferences(codecs_videos);
-		
+
 		this.channel = await this.pc.createDataChannel('chat');
 		this.channel.addEventListener('open', () => {
 			this.logger.info('客户端通道创建');
@@ -445,7 +445,7 @@ export class WebRTCRecorder {
 		this.logger.debug(resOffer.sdp);
 		await this.pc.setLocalDescription(resOffer);
 		this.sender = this.pc.addTrack(vTrack);
-		
+
 		const parameters = this.sender.getParameters();
 		this.logger.info('sender parameters', parameters);
 		if(aTrack){
@@ -462,10 +462,10 @@ export class WebRTCRecorder {
 		this.pc.addEventListener('iceconnectionstatechange', async event => {
 			this.logger.info('pc.iceConnectionState', this.pc.iceConnectionState);
 		});
-		
+
 		this.pc.addEventListener('signalingstatechange', async () => {
 		  if (this.pc.signalingState === 'stable') {
-			  this.statsBandwidth(this.pc)
+			  await this.statsBandwidth(this.pc)
 		    const sender = this.pc.getSenders().find(
 		      sender => sender.track.kind === 'video'
 		    );
