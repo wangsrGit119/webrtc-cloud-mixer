@@ -1,6 +1,6 @@
 {
   "name": "webrtc-cloud-mixer",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Webrtc 多视频合成、本地录制、云端录制；videos merger、remote、local recording；",
   "main": "src/WebRTCRecorder.js",
   "scripts": {
@@ -19,7 +19,7 @@
   "author": "wangsr281436@gmail.com",
   "license": "ISC",
   "dependencies": {
-	  
+
   },
   "publishConfig": {
       "registry": "https://registry.npmjs.org/",
@@ -31,6 +31,6 @@
   },
   "homepage":"https://github.com/wangsrGit119/webrtc-cloud-mixer.git",
   "devDependencies": {
-   
+
   }
 }
